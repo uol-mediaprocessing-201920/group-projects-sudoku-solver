@@ -1,1 +1,1 @@
-# Sudoku Reader - Gruppe 7
+# Sudoku Reader
