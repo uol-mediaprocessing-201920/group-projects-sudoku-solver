@@ -1,6 +1,33 @@
+import time
+import multiprocessing
+
+
+# def mp_solve_process(queue):
+#     grid = queue.get()
+#     result = solve(grid)
+#     queue.put(result)
+#
+#
+# def mp_solve(grid, timeout):
+#     queue = multiprocessing.Queue()
+#     process = multiprocessing.Process(target=mp_solve_process, args=(queue,))
+#     process.start()
+#     queue.put(grid)
+#     process.join(timeout=timeout)
+#     process.kill()
+#     result = queue.get()
+#     return result
+#
+#
 # stolen from https://techwithtim.net/tutorials/python-programming/sudoku-solver-backtracking/
 
-def solve(grid):
+def solve(grid, start=None, timeout=None):
+    if timeout is not None:
+        if start is None:
+            start = time.time()
+        elif time.time() - start > timeout:
+            raise TimeoutError()
+
     # try find empty cell
     find = find_empty(grid)
     if not find:
@@ -12,13 +39,20 @@ def solve(grid):
         # continue solving
         row, col = find
 
+    box_row = int(row / 3)
+    box_col = int(col / 3)
+    numbers_in_box = grid[box_row * 3:(box_row + 1) * 3, box_col * 3:(box_col + 1) * 3]
+    numbers_in_row = grid[row, :]
+    numbers_in_col = grid[:, col]
+    possible_numbers = [i for i in range(1, 10) if i not in numbers_in_row and i not in numbers_in_col and i not in numbers_in_box]
+
     # try each number
-    for i in range(1, 10):
+    for i in possible_numbers:
         # check if sudoku is still valid
         if valid(grid, i, (row, col)):
             # sudoku is still valid, keep solving
             grid[row][col] = i
-            if solve(grid):
+            if solve(grid, start, timeout):
                 # sudoku has been successfully solved somehow
                 return True
             else:

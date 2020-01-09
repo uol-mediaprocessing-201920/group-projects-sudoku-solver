@@ -1,4 +1,5 @@
-import keras
+#import keras
+import tensorflow
 import numpy as np
 from definitions.common import *
 
@@ -7,7 +8,7 @@ INPUT_SHAPE = (*INPUT_SIZE, 1)
 
 
 def load_model(path="./sudoku_recognition_model.h5"):
-    return keras.models.load_model(path)
+    return tensorflow.keras.models.load_model(path)
 
 
 def preprocess(cell, input_format):

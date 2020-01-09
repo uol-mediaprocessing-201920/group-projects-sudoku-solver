@@ -1,7 +1,9 @@
-from definitions import detection, transformation, extraction, recognition, solving, ar
+from definitions import detection, transformation, extraction, recognition, solving, solving_dlx, ar
+from definitions.pipeline import Stage, Pipeline
 
 import numpy as np
 import cv2 as cv
+import multiprocessing as mp
 
 
 def show_images(window_name, images, padding_width=2, padding_color=127):
@@ -23,7 +25,8 @@ def show_images(window_name, images, padding_width=2, padding_color=127):
     cv.imshow(window_name, frame)
 
 
-def draw_centered_text(image, text, font_face=cv.FONT_HERSHEY_SIMPLEX, font_scale=1/32, thickness=2, color=(0, 0, 255)):
+def draw_centered_text(image, text, font_face=cv.FONT_HERSHEY_SIMPLEX, font_scale=1 / 32, thickness=2,
+                       color=(0, 0, 255)):
     image_width, image_height = image.shape[:2]
     font_scale = min(image_width, image_height) * font_scale
     text = str(text)
@@ -44,6 +47,128 @@ RECOGNITION_WINDOW_NAME = "4. Recognition"
 SOLVING_WINDOW_NAME = "5. Solving"
 AR_WINDOW_NAME = "6. Artificial Reality"
 
+model = recognition.load_model()
+
+
+class SudokuData():
+    def __init__(self):
+        self.input_image = None
+        self.detected_contour = None
+        self.transform_matrix = None
+        self.transform_image = None
+        self.extracted_cells = None
+        self.recognized_digits = None
+        self.solved_puzzle = None
+
+
+class DetectionStage(Stage):
+    def compute(self, data: SudokuData):
+        grayscale_image = detection.convert_to_grayscale(data.input_image, input_format="BGR")
+        threshold_image = detection.threshold_image(grayscale_image)
+        contours = detection.find_contours(threshold_image)
+        contours = [detection.approximate_contour(x) for x in contours]
+        contours = detection.get_foursided_contours(contours)
+        contours_image = detection.draw_contours(threshold_image, contours,
+                                                 input_format="GRAY", output_format="BGR",
+                                                 thickness=0.001, color=(0, 0, 255))
+        data.detected_contour = detection.get_largest_contour(contours)
+        contour_valid = detection.check_sudoku_contour(data.input_image, data.detected_contour)
+        contour_color = (0, 255, 0) if contour_valid else (0, 0, 255)
+        contour_image = detection.draw_contours(contours_image, [data.detected_contour], thickness=0.01, color=contour_color)
+        show_images(DETECTION_WINDOW_NAME, [
+            [input_image, grayscale_image],
+            [threshold_image, contour_image]
+        ])
+        if contour_valid:
+            return data
+
+
+class TransformationStage(Stage):
+    def compute(self, data: SudokuData):
+        transform_source = transformation.sort_contour(data.detected_contour)
+        side_length = transformation.get_side_length(transform_source)
+        transform_target = transformation.get_target_contour(side_length)
+        data.transform_matrix = transformation.get_transformation(transform_source, transform_target)
+        data.transform_image = transformation.apply_transformation(data.input_image, data.transform_matrix, side_length)
+        show_images(TRANSFORM_WINDOW_NAME, [[data.transform_image]])
+        return data
+
+
+class ExtractionStage(Stage):
+    def compute(self, data: SudokuData):
+        data.extracted_cells = extraction.extract_cells(data.transform_image)
+        show_images(EXTRACTION_WINDOW_NAME, data.extracted_cells)
+        return data
+
+
+class RecognitionStage(Stage):
+    def compute(self, data: SudokuData):
+        # preprocess grid of extracted cells for neural network
+        preprocessed_cells = np.array([[recognition.preprocess(cell, "BGR") for cell in row] for row in data.extracted_cells])
+        # reshape grid of preprocessed cells into linear array
+        preprocessed_cells = preprocessed_cells.reshape(-1, *recognition.INPUT_SHAPE)
+        # predict classes and corresponding probabilities for all preprocessed cells
+        classes, probabilities = recognition.predict_batch(preprocessed_cells, model)
+        # reshape classes output as grid
+        data.recognized_digits = classes.reshape(9, 9)  # TODO: (9, 9) should not be hardcoded here
+
+        recognized_cell_images = []
+        for i_row in range(len(data.extracted_cells)):
+            row_images = []
+            for i_col in range(len(data.extracted_cells[i_row])):
+                image = data.extracted_cells[i_row][i_col].copy()
+                clazz = data.recognized_digits[i_row][i_col]
+                draw_centered_text(image, clazz)
+                row_images.append(image)
+            recognized_cell_images.append(row_images)
+        show_images(RECOGNITION_WINDOW_NAME, recognized_cell_images)
+
+        return data
+
+
+class SolvingStage(Stage):
+    def compute(self, data: SudokuData):
+        # data.solved_puzzle = data.recognized_digits.copy()
+        # try:
+        #     solved = solving.solve(data.solved_puzzle, timeout=5.0)
+        #     if not solved:
+        #         print("Could not find solution for Sudoku!")
+        #         return None
+        # except TimeoutError:
+        #     print("Took too long to solve Sudoku!")
+        #     return None
+
+        try:
+            data.solved_puzzle = solving_dlx.solve(data.recognized_digits)
+            if data.solved_puzzle is False:
+                print("Could not find solution for Sudoku!")
+                return None
+        except:
+            print("Some unexpected error occurred while solving the Sudoku :(")
+            return None
+
+        solved_cell_images = []
+        for i_row in range(len(data.extracted_cells)):
+            row_images = []
+            for i_col in range(len(data.extracted_cells[i_row])):
+                image = data.extracted_cells[i_row][i_col].copy()
+                digit = data.solved_puzzle[i_row][i_col]
+                draw_centered_text(image, digit)
+                row_images.append(image)
+            solved_cell_images.append(row_images)
+        show_images(SOLVING_WINDOW_NAME, solved_cell_images)
+        return data
+
+
+class ARStage(Stage):
+    def compute(self, data: SudokuData):
+        ar.draw_solution(data.transform_image, data.recognized_digits, data.solved_puzzle)
+        ar_image = ar.overlay_transformed_image(background_image=data.input_image,
+                                                foreground_image=data.transform_image,
+                                                transformation_matrix=np.linalg.inv(data.transform_matrix))
+        show_images(AR_WINDOW_NAME, [[ar_image]])
+
+
 cv.namedWindow(DETECTION_WINDOW_NAME)
 cv.namedWindow(TRANSFORM_WINDOW_NAME)
 cv.namedWindow(EXTRACTION_WINDOW_NAME)
@@ -55,7 +180,12 @@ vc = cv.VideoCapture(0)
 if not vc.isOpened():
     raise Exception("Cannot open video capturing device!")
 
-model = recognition.load_model()
+pipeline = Pipeline([DetectionStage(),
+                     TransformationStage(),
+                     ExtractionStage(),
+                     RecognitionStage(),
+                     SolvingStage(),
+                     ARStage()])
 
 while True:
     key = cv.waitKey(20)
@@ -68,87 +198,8 @@ while True:
         print("Unable to capture!")
         break
 
-    noise_image = np.random.rand(*input_image.shape)
-    noise_image *= 255
-    noise_image = noise_image.astype("uint8")
-
-    grayscale_image = detection.convert_to_grayscale(input_image, input_format="BGR")
-    threshold_image = detection.threshold_image(grayscale_image)
-    contours = detection.find_contours(threshold_image)
-    contours = [detection.approximate_contour(x) for x in contours]
-    contours = detection.get_foursided_contours(contours)
-    contours_image = detection.draw_contours(threshold_image, contours,
-                                             input_format="GRAY", output_format="BGR",
-                                             thickness=0.001, color=(0, 0, 255))
-    contour = detection.get_largest_contour(contours)
-    contour_valid = detection.check_sudoku_contour(input_image, contour)
-
-    if contour_valid:
-        contour_image = detection.draw_contours(contours_image, [contour],
-                                                thickness=0.01, color=(0, 255, 0))
-
-        show_images(DETECTION_WINDOW_NAME, [
-            [input_image, grayscale_image],
-            [threshold_image, contour_image]
-        ])
-
-        transform_source = transformation.sort_contour(contour)
-        side_length = transformation.get_side_length(transform_source)
-        transform_target = transformation.get_target_contour(side_length)
-        transform_matrix = transformation.get_transformation(transform_source, transform_target)
-        transform_image = transformation.apply_transformation(input_image, transform_matrix, side_length)
-        show_images(TRANSFORM_WINDOW_NAME, [[transform_image]])
-
-        cells = extraction.extract_cells(transform_image)
-        show_images(EXTRACTION_WINDOW_NAME, cells)
-
-        # preprocess grid of extracted cells for neural network
-        preprocessed_cells = np.array([[recognition.preprocess(cell, "BGR") for cell in row] for row in cells])
-        # reshape grid of preprocessed cells into linear array
-        preprocessed_cells = preprocessed_cells.reshape(-1, *recognition.INPUT_SHAPE)
-        # predict classes and corresponding probabilities for all preprocessed cells
-        classes, probabilities = recognition.predict_batch(preprocessed_cells, model)
-        # reshape classes output as grid
-        classes = classes.reshape(9, 9)  # TODO: (9, 9) should not be hardcoded here
-        # reshape probabilities output as grid
-        probabilities = probabilities.reshape(9, 9)  # TODO: (9, 9) should not be hardcoded here
-
-        recognized_cell_images = []
-        for i_row in range(len(cells)):
-            row_images = []
-            for i_col in range(len(cells[i_row])):
-                image = cells[i_row][i_col].copy()
-                clazz = classes[i_row][i_col]
-                prob = probabilities[i_row][i_col]
-                draw_centered_text(image, clazz)
-                row_images.append(image)
-            recognized_cell_images.append(row_images)
-        show_images(RECOGNITION_WINDOW_NAME, recognized_cell_images)
-
-        unsolved_grid = classes.copy()
-        solved_grid = unsolved_grid.copy()
-        solving.solve(solved_grid)
-
-        solved_cell_images = []
-        for i_row in range(len(cells)):
-            row_images = []
-            for i_col in range(len(cells[i_row])):
-                image = cells[i_row][i_col].copy()
-                digit = solved_grid[i_row][i_col]
-                draw_centered_text(image, digit)
-                row_images.append(image)
-            solved_cell_images.append(row_images)
-        show_images(SOLVING_WINDOW_NAME, solved_cell_images)
-
-        ar.draw_solution(transform_image, unsolved_grid, solved_grid)
-        ar_image = ar.overlay_transformed_image(input_image, transform_image, np.linalg.inv(transform_matrix))
-        show_images(AR_WINDOW_NAME, [[ar_image]])
-    else:
-        contour_image = detection.draw_contours(contours_image, [contour], thickness=0.01, color=(0, 0, 255))
-        # always update detection window even if we did not find the Sudoku
-        show_images(DETECTION_WINDOW_NAME, [
-            [input_image, grayscale_image],
-            [threshold_image, contour_image]
-        ])
+    data = SudokuData()
+    data.input_image = input_image
+    pipeline.feed(data)
 
 exit(0)
