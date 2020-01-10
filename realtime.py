@@ -4,9 +4,13 @@ from definitions.pipeline import Stage, Pipeline
 import numpy as np
 import cv2 as cv
 import multiprocessing as mp
+import threading
+
+gui_queue = []
+gui_lock = threading.Semaphore(1)
 
 
-def show_images(window_name, images, padding_width=2, padding_color=127):
+def show_images(window_name, images, padding_width=2, padding_color=127, scaling=None):
     frame = []
     for row in images:
         frame_row = []
@@ -17,13 +21,19 @@ def show_images(window_name, images, padding_width=2, padding_color=127):
             elif not (len(col.shape) == 3 and col.shape[-1] == 3):
                 raise Exception("Unknown image format (must be either BGR or GRAY)!")
             p = padding_width
+            if scaling is not None:
+                h, w = image.shape[:2]
+                h = int(h * scaling)
+                w = int(w * scaling)
+                image = cv.resize(image, (w, h))
             image = np.pad(image, ((p, p), (p, p), (0, 0)), constant_values=padding_color)
             frame_row.append(image)
         frame.append(frame_row)
     frame = [np.hstack(x) for x in frame]
     frame = np.vstack(frame)
-    cv.imshow(window_name, frame)
-
+    gui_lock.acquire()
+    gui_queue.append(lambda: cv.imshow(window_name, frame))
+    gui_lock.release()
 
 def draw_centered_text(image, text, font_face=cv.FONT_HERSHEY_SIMPLEX, font_scale=1 / 32, thickness=2,
                        color=(0, 0, 255)):
@@ -46,8 +56,6 @@ EXTRACTION_WINDOW_NAME = "3. Extraction"
 RECOGNITION_WINDOW_NAME = "4. Recognition"
 SOLVING_WINDOW_NAME = "5. Solving"
 AR_WINDOW_NAME = "6. Artificial Reality"
-
-model = recognition.load_model()
 
 
 class SudokuData():
@@ -76,9 +84,9 @@ class DetectionStage(Stage):
         contour_color = (0, 255, 0) if contour_valid else (0, 0, 255)
         contour_image = detection.draw_contours(contours_image, [data.detected_contour], thickness=0.01, color=contour_color)
         show_images(DETECTION_WINDOW_NAME, [
-            [input_image, grayscale_image],
+            [data.input_image, grayscale_image],
             [threshold_image, contour_image]
-        ])
+        ], scaling=0.5)
         if contour_valid:
             return data
 
@@ -102,13 +110,22 @@ class ExtractionStage(Stage):
 
 
 class RecognitionStage(Stage):
+    def __init__(self):
+        super().__init__()
+        self.model = None
+
+    def setup(self):
+        print("Loading model...")
+        self.model = recognition.load_model()
+        print("Model loaded!")
+
     def compute(self, data: SudokuData):
         # preprocess grid of extracted cells for neural network
         preprocessed_cells = np.array([[recognition.preprocess(cell, "BGR") for cell in row] for row in data.extracted_cells])
         # reshape grid of preprocessed cells into linear array
         preprocessed_cells = preprocessed_cells.reshape(-1, *recognition.INPUT_SHAPE)
         # predict classes and corresponding probabilities for all preprocessed cells
-        classes, probabilities = recognition.predict_batch(preprocessed_cells, model)
+        classes, probabilities = recognition.predict_batch(preprocessed_cells, self.model)
         # reshape classes output as grid
         data.recognized_digits = classes.reshape(9, 9)  # TODO: (9, 9) should not be hardcoded here
 
@@ -199,7 +216,14 @@ while True:
         break
 
     data = SudokuData()
+    #data.input_image = cv.resize(input_image, (512, 512), interpolation=cv.INTER_AREA).copy()
     data.input_image = input_image
     pipeline.feed(data)
+
+    gui_lock.acquire()
+    while len(gui_queue) > 0:
+        action = gui_queue.pop(0)
+        action()
+    gui_lock.release()
 
 exit(0)
