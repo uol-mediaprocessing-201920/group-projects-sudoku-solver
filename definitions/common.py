@@ -86,7 +86,7 @@ def grid_to_string(grid, n_rows=9, n_cols=9):
             else:
                 output.append("|   ")
         output.append("|\n")
-    output.append("-" * total_width + "\n")
+    output.append("-" * total_width)
     return "".join(output)
 
 
