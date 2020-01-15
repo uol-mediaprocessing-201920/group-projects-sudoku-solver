@@ -1,6 +1,6 @@
 import cv2 as cv
 import numpy as np
-from definitions.common import *
+from common import *
 
 
 def convert_to_grayscale(image, input_format):

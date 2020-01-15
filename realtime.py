@@ -1,3 +1,6 @@
+import sys
+sys.path.append("./definitions")  # hack? allows files like detection.py to find common.py
+
 from definitions import detection, transformation, extraction, recognition, solving, solving_dlx, ar
 from definitions.pipeline import Stage, Pipeline
 
