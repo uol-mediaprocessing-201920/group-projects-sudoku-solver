@@ -103,6 +103,11 @@ def print_grid(grid, **kwargs):
     print(string)
 
 
+def print_grids(grids, **kwargs):
+    string = grids_to_string(grids, **kwargs)
+    print(string)
+
+
 def get_opencv_color_conversion_code(source, target):
     return getattr(cv, "COLOR_" + source.upper() + "2" + target.upper())
 
