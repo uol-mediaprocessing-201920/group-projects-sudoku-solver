@@ -1,9 +1,8 @@
-#import keras
 import tensorflow
 import numpy as np
 from common import *
 
-INPUT_SIZE = (32, 32)
+INPUT_SIZE = (28, 28)
 INPUT_SHAPE = (*INPUT_SIZE, 1)
 
 
