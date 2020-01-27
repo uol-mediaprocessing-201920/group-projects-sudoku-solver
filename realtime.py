@@ -65,6 +65,8 @@ class SudokuData():
     def __init__(self):
         self.input_image = None
         self.detected_contour = None
+        self.transform_source = None
+        self.transform_target = None
         self.transform_matrix = None
         self.transform_image = None
         self.extracted_cells = None
@@ -96,10 +98,10 @@ class DetectionStage(Stage):
 
 class TransformationStage(Stage):
     def compute(self, data: SudokuData):
-        transform_source = transformation.sort_contour(data.detected_contour)
-        side_length = transformation.get_side_length(transform_source)
-        transform_target = transformation.get_target_contour(side_length)
-        data.transform_matrix = transformation.get_transformation(transform_source, transform_target)
+        data.transform_source = transformation.sort_contour(data.detected_contour)
+        side_length = transformation.get_side_length(data.transform_source)
+        data.transform_target = transformation.get_target_contour(side_length)
+        data.transform_matrix = transformation.get_transformation(data.transform_source, data.transform_target)
         data.transform_image = transformation.apply_transformation(data.input_image, data.transform_matrix, side_length)
         show_images(TRANSFORM_WINDOW_NAME, [[data.transform_image]])
         return data
@@ -183,9 +185,12 @@ class SolvingStage(Stage):
 class ARStage(Stage):
     def compute(self, data: SudokuData):
         ar.draw_solution(data.transform_image, data.recognized_digits, data.solved_puzzle)
+        # inverting the transformation matrix does not always work
+        # a more robust solution is to use the target and destination points for calculation
+        M = transformation.get_transformation(data.transform_target, data.transform_source)
         ar_image = ar.overlay_transformed_image(background_image=data.input_image,
                                                 foreground_image=data.transform_image,
-                                                transformation_matrix=np.linalg.inv(data.transform_matrix))
+                                                transformation_matrix=M)
         show_images(AR_WINDOW_NAME, [[ar_image]])
 
 
